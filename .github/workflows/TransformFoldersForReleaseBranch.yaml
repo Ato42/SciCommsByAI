@@ -40,17 +40,16 @@ jobs:
           sudo mv yq /usr/local/bin/yq
 
       # 4. Transform folders and update _config.yml.
-      - name: Transform folders to collections and update _config.yml
+      - name: Transform folders and process Markdown files
         run: |
           # Define a list of folders to exclude (adjust as needed).
           excluded=("ExcludeFolder1" "ExcludeFolder2")
           
           # Loop over each top-level directory.
           for d in */ ; do
-            # Remove the trailing slash.
             folder="${d%/}"
             if [ -d "$folder" ]; then
-              # Only process folders whose name starts with an uppercase letter.
+              # Process only folders whose name starts with an uppercase letter.
               first_char=$(echo "$folder" | cut -c1)
               if [[ "$first_char" =~ [A-Z] ]]; then
                 skip=false
@@ -65,15 +64,10 @@ jobs:
                   continue
                 fi
 
-                # Convert the folder name:
-                #   - to lowercase,
-                #   - replace spaces with underscores,
-                #   - and prepend an underscore.
+                # Convert folder name: lowercase, replace spaces with underscores, and prepend an underscore.
                 new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
                 new_folder="_${new_folder}"
                 echo "Transforming folder '$folder' to '$new_folder'"
-                
-                # Rename (move) the folder.
                 mv "$folder" "$new_folder"
                 
                 # Derive the collection name (strip the leading underscore).
@@ -84,7 +78,7 @@ jobs:
                   echo "collections:" >> _config.yml
                 fi
                 
-                # Use yq to check if the collection is already defined.
+                # Use yq to add the collection if not already present.
                 current_val=$(yq e ".collections.${coll_name}" _config.yml)
                 if [ "$current_val" = "null" ]; then
                   echo "Adding collection '$coll_name' to _config.yml"
@@ -92,9 +86,88 @@ jobs:
                 else
                   echo "Collection '$coll_name' already exists in _config.yml"
                 fi
+
+                # Process each Markdown file (.md or .markdown) in the new folder.
+                for file in "$new_folder"/*.{md,markdown}; do
+                  if [ -f "$file" ]; then
+                    echo "Processing file: $file"
+                    # Check if the file already has front matter (first line is '---').
+                    first_line=$(head -n 1 "$file")
+                    if [ "$first_line" != "---" ]; then
+                      # Extract the first line as the raw title and clean it.
+                      raw_title=$(head -n 1 "$file")
+                      title=$(echo "$raw_title" | sed -e 's/^#\+ *//' -e 's/[*_]//g')
+                      
+                      # Remove the first line from the content.
+                      tail -n +2 "$file" > "$file.tmp"
+
+                      # Extract Author and Prompt from the last 10 lines.
+                      author_line=$(tail -n 10 "$file.tmp" | grep -i "^Author:")
+                      prompt_line=$(tail -n 10 "$file.tmp" | grep -i "^Prompt:")
+                      author=$(echo "$author_line" | sed -e 's/^Author: *\*\(.*\)\*$/\1/')
+                      prompt=$(echo "$prompt_line" | sed -e 's/^Prompt: *\*\(.*\)\*$/\1/')
+
+                      # Remove lines that contain Author: or Prompt: from the content.
+                      grep -viE "^(Author:|Prompt:)" "$file.tmp" > "$file.tmp2"
+
+                      # Get the file's creation time (first commit) and last update time (most recent commit).
+                      created=$(git log --diff-filter=A --format=%aI -- "$file" | tail -n 1)
+                      updated=$(git log -1 --format=%aI -- "$file")
+                      # Fallback to file system timestamps if git log returns empty.
+                      if [ -z "$created" ]; then
+                        created=$(stat -c %y "$file")
+                      fi
+                      if [ -z "$updated" ]; then
+                        updated=$(stat -c %y "$file")
+                      fi
+
+                      # Prepend the new YAML front matter block.
+                      {
+                        echo "---"
+                        echo "title: \"$title\""
+                        echo "author: \"$author\""
+                        echo "prompt: \"$prompt\""
+                        echo "created: \"$created\""
+                        echo "updated: \"$updated\""
+                        echo "---"
+                        echo ""
+                        cat "$file.tmp2"
+                      } > "$file"
+
+                      # Clean up temporary files.
+                      rm "$file.tmp" "$file.tmp2"
+                    else
+                      echo "File $file already has front matter, skipping."
+                    fi
+                  fi
+                done
+
+                # If the collection folder does not have an index.md, create one.
+                if [ ! -f "$new_folder/index.md" ]; then
+                  echo "Creating index.md for collection $coll_name"
+                  {
+                    echo "---"
+                    echo "layout: default"
+                    echo "title: \"${coll_name^} Collection\""
+                    echo "---"
+                    echo ""
+                    echo "# ${coll_name^} Collection"
+                    echo ""
+                    echo "This collection contains the following posts:"
+                    echo ""
+                    for md in "$new_folder"/*.{md,markdown}; do
+                      if [ -f "$md" ]; then
+                        base=$(basename "$md")
+                        echo "- [$base]($base)"
+                      fi
+                    done
+                  } > "$new_folder/index.md"
+                fi
+
               fi
             fi
           done
+
 
       # 5. Commit the transformed changes back to the Release branch.
       - name: Commit changes
