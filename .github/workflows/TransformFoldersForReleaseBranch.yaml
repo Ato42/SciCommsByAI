@@ -49,6 +49,7 @@ jobs:
           for d in */ ; do
             folder="${d%/}"
             if [ -d "$folder" ]; then
+              echo "Processing folder $folder"
               # Process only folders whose name starts with an uppercase letter.
               first_char=$(echo "$folder" | cut -c1)
               if [[ "$first_char" =~ [A-Z] ]]; then
