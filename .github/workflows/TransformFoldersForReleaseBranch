@@ -1,0 +1,94 @@
+name: Transform Folders for Release Branch
+
+on:
+  push:
+    branches:
+      - Release  # This workflow runs when code is pushed to the release branch
+
+jobs:
+  transform:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Set up Ruby (if needed for further steps like building your Jekyll site)
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2.2'
+
+      # 3. Install yq (mikefarah's version) to update YAML files
+      - name: Install yq
+        run: |
+          wget -q https://github.com/mikefarah/yq/releases/download/v4.30.6/yq_linux_amd64 -O yq
+          chmod +x yq
+          sudo mv yq /usr/local/bin/yq
+
+      # 4. Transform folders and update _config.yml
+      - name: Transform folders to collections and update _config.yml
+        run: |
+          # Define a list of folders to exclude from processing.
+          # Modify the names in the array as needed.
+          excluded=("ExcludeFolder1" "ExcludeFolder2")
+
+          # Loop over each top-level directory
+          for d in */ ; do
+            # Remove the trailing slash from the folder name.
+            folder="${d%/}"
+
+            # Only process if it is a directory.
+            if [ -d "$folder" ]; then
+              # Check if the folder name starts with an uppercase letter (A-Z).
+              first_char=$(echo "$folder" | cut -c1)
+              if [[ "$first_char" =~ [A-Z] ]]; then
+
+                # Check against the exclusion list.
+                skip=false
+                for ex in "${excluded[@]}"; do
+                  if [ "$folder" = "$ex" ]; then
+                    echo "Skipping excluded folder: $folder"
+                    skip=true
+                    break
+                  fi
+                done
+                if [ "$skip" = true ]; then
+                  continue
+                fi
+
+                # Convert the folder name:
+                # - Change to lowercase.
+                # - Replace spaces with underscores.
+                # - Prepend an underscore.
+                new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
+                new_folder="_${new_folder}"
+                echo "Transforming folder '$folder' to '$new_folder'"
+                
+                # Move (rename) the folder.
+                mv "$folder" "$new_folder"
+                
+                # Derive the collection name by removing the leading underscore.
+                coll_name="${new_folder#_}"
+                
+                # Ensure _config.yml has a collections section.
+                if ! grep -q "^collections:" _config.yml; then
+                  echo "collections:" >> _config.yml
+                fi
+
+                # Use yq to check if the collection is already defined.
+                current_val=$(yq e ".collections.${coll_name}" _config.yml)
+                if [ "$current_val" = "null" ]; then
+                  echo "Adding collection '$coll_name' to _config.yml"
+                  yq e -i ".collections.${coll_name} = {\"output\": true}" _config.yml
+                else
+                  echo "Collection '$coll_name' already exists in _config.yml"
+                fi
+              fi
+            fi
+          done
+
+      # 5. (Optional) Build your Jekyll site or deploy it, for example:
+      #- name: Build Jekyll Site
+      #  run: bundle exec jekyll build
