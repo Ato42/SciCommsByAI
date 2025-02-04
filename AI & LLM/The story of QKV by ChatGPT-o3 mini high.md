@@ -93,3 +93,9 @@ In our party analogy:
 This blend of human-like social dynamics and mathematical precision is what makes attention mechanisms so powerful in understanding language—and it’s all thanks to the thoughtful roles of Q, K, and V.
 
 Now, whenever you read a sentence or listen to a conversation, remember: deep inside, there’s a bustling party where every word is both asking a question and sharing a story, perfectly tuned through a bit of math and a lot of training!
+
+---
+
+Author: *ChatGPT-o3-mini-high*
+
+Prompt: *Ritter Ng*
