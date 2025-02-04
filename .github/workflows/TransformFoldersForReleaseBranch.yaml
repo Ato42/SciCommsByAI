@@ -95,53 +95,50 @@ jobs:
                 for file in "$new_folder"/*.{md,markdown}; do
                   if [ -f "$file" ]; then
                     echo "Processing file: $file"
-                    # Check if the file already has front matter (first line is '---').
-                    first_line=$(head -n 1 "$file")
-                    if [ "$first_line" != "---" ]; then
-                      # Extract the first line as the raw title and clean it.
-                      raw_title=$(head -n 1 "$file")
-                      title=$(echo "$raw_title" | sed -e 's/^#\+ *//' -e 's/[*_]//g')
+                    
+                    # Normalize filename
+                    dir=$(dirname "$file")
+                    base=$(basename "$file")
+                    new_base=$(echo "$base" | sed -e 's/ /-/g' -e 's/[^a-zA-Z0-9.-]/-/g' -e 's/--*/-/g')
+                    new_file="$dir/$new_base"
+                    if [ "$file" != "$new_file" ]; then
+                      mv "$file" "$new_file"
+                      file="$new_file"
+                    fi
+                    
+                    # Check if the file already has front matter
+                    if ! grep -q "^---$" "$file" || ! grep -q "^layout:" "$file"; then
+                      # Create temporary file
+                      tmp_file=$(mktemp)
                       
-                      # Remove the first line from the content.
-                      tail -n +2 "$file" > "$file.tmp"
-
-                      # Extract Author and Prompt from the last 10 lines.
-                      author_line=$(tail -n 10 "$file.tmp" | grep -i "^Author:")
-                      prompt_line=$(tail -n 10 "$file.tmp" | grep -i "^Prompt:")
-                      author=$(echo "$author_line" | sed -e 's/^Author: *\*\(.*\)\*$/\1/')
-                      prompt=$(echo "$prompt_line" | sed -e 's/^Prompt: *\*\(.*\)\*$/\1/')
-
-                      # Remove lines that contain Author: or Prompt: from the content.
-                      grep -viE "^(Author:|Prompt:)" "$file.tmp" > "$file.tmp2"
-
-                      # Get the file's creation time (first commit) and last update time (most recent commit).
-                      created=$(git log --diff-filter=A --format=%aI -- "$file" | tail -n 1)
-                      updated=$(git log -1 --format=%aI -- "$file")
-                      # Fallback to file system timestamps if git log returns empty.
-                      if [ -z "$created" ]; then
-                        created=$(stat -c %y "$file")
+                      # Extract title from first line or filename
+                      title=$(head -n 1 "$file" | sed -e 's/^#\+ *//' -e 's/[*_]//g')
+                      if [ -z "$title" ]; then
+                        title=$(echo "$new_base" | sed -e 's/\.md$//' -e 's/-/ /g')
                       fi
-                      if [ -z "$updated" ]; then
-                        updated=$(stat -c %y "$file")
-                      fi
-
-                      # Prepend the new YAML front matter block.
+                      
+                      # Extract metadata
+                      author=$(grep -i "^Author:" "$file" | sed -e 's/^Author: *\*\(.*\)\*$/\1/' -e 's/^Author: *//')
+                      prompt=$(grep -i "^Prompt:" "$file" | sed -e 's/^Prompt: *\*\(.*\)\*$/\1/' -e 's/^Prompt: *//')
+                      
+                      # Write front matter
                       {
                         echo "---"
+                        echo "layout: post"
                         echo "title: \"$title\""
-                        echo "author: \"$author\""
-                        echo "prompt: \"$prompt\""
-                        echo "created: \"$created\""
-                        echo "updated: \"$updated\""
+                        [ ! -z "$author" ] && echo "author: \"$author\""
+                        [ ! -z "$prompt" ] && echo "prompt: \"$prompt\""
+                        echo "created: \"$(date -u +"%Y-%m-%d %H:%M:%S")\""
+                        echo "updated: \"$(date -u +"%Y-%m-%d %H:%M:%S")\""
                         echo "---"
                         echo ""
-                        cat "$file.tmp2"
-                      } > "$file"
-
-                      # Clean up temporary files.
-                      rm "$file.tmp" "$file.tmp2"
-                    else
-                      echo "File $file already has front matter, skipping."
+                        
+                        # Add content, skipping existing front matter if any
+                        sed -e '1,/^---$/d' -e '/^---$/,$!d' "$file" 2>/dev/null || cat "$file"
+                      } > "$tmp_file"
+                      
+                      # Replace original file
+                      mv "$tmp_file" "$file"
                     fi
                   fi
                 done
