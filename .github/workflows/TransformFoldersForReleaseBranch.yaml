@@ -45,6 +45,9 @@ jobs:
           echo "Starting Transform"
           excluded=("ExcludeFolder1" "ExcludeFolder2")
           
+          # Create an array to store collection information for the main index
+          declare -A collections_info
+          
           # Loop over each top-level directory.
           for d in */ ; do
             folder="${d%/}"
@@ -65,27 +68,27 @@ jobs:
                   continue
                 fi
 
-                # Convert folder name: lowercase, replace spaces with underscores, and prepend an underscore.
-                new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
+                # Store original folder name for display
+                display_name="$folder"
+                
+                # Convert folder name: lowercase, replace spaces and special chars with underscores
+                new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')
                 new_folder="_${new_folder}"
                 echo "Transforming folder '$folder' to '$new_folder'"
                 mv "$folder" "$new_folder"
                 
-                # Derive the collection name (strip the leading underscore).
+                # Derive the collection name (strip the leading underscore)
                 coll_name="${new_folder#_}"
                 
-                # Ensure _config.yml has a collections section.
-                if ! grep -q "^collections:" _config.yml; then
-                  echo "collections:" >> _config.yml
-                fi
+                # Store collection info for main index
+                collections_info["$coll_name"]="$display_name"
                 
-                # Use yq to add the collection if not already present.
+                # Use yq to add the collection with display name if not already present
                 current_val=$(yq e ".collections.${coll_name}" _config.yml)
                 if [ "$current_val" = "null" ]; then
                   echo "Adding collection '$coll_name' to _config.yml"
-                  yq e -i ".collections.${coll_name} = {\"output\": true}" _config.yml
-                else
-                  echo "Collection '$coll_name' already exists in _config.yml"
+                  yq e -i ".collections.${coll_name}.output = true" _config.yml
+                  yq e -i ".collections.${coll_name}.display_name = \"$display_name\"" _config.yml
                 fi
 
                 # Process each Markdown file (.md or .markdown) in the new folder.
@@ -143,16 +146,16 @@ jobs:
                   fi
                 done
 
-                # If the collection folder does not have an index.md, create one.
+                # Create index.md with proper collection name
                 if [ ! -f "$new_folder/index.md" ]; then
                   echo "Creating index.md for collection $coll_name"
                   {
                     echo "---"
                     echo "layout: default"
-                    echo "title: \"${coll_name^} Collection\""
+                    echo "title: \"${folder} Collection\""  # Use original folder name for title
                     echo "---"
                     echo ""
-                    echo "# ${coll_name^} Collection"
+                    echo "# ${folder} Collection"
                     echo ""
                     echo "This collection contains the following posts:"
                     echo ""
@@ -169,6 +172,32 @@ jobs:
             fi
           done
 
+          # Update main index.markdown with all collections
+          {
+            echo "---"
+            echo "layout: home"
+            echo "---"
+            echo ""
+            
+            # Loop through collections and create sections
+            for coll_name in "${!collections_info[@]}"; do
+              display_name="${collections_info[$coll_name]}"
+              echo ""
+              echo "## ${display_name}"
+              echo ""
+              echo "<ul>"
+              echo "{% for post in site.${coll_name} %}"
+              echo "  {% unless post.name == 'index.md' %}"
+              echo "  <li>"
+              echo "    <a href=\"{{ post.url }}\">{{ post.title }}</a>"
+              echo "    {% if post.description %}<p>{{ post.description }}</p>{% endif %}"
+              echo "  </li>"
+              echo "  {% endunless %}"
+              echo "{% endfor %}"
+              echo "</ul>"
+              echo ""
+            done
+          } > index.markdown
 
       # 5. Commit the transformed changes back to the Release branch.
       - name: Commit changes
