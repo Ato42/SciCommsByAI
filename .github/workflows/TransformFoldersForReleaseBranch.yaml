@@ -108,14 +108,12 @@ jobs:
           path: _site
 
   deploy:
-    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    needs: build
     steps:
-      # Download the artifact from the build job
-      - name: Download artifact
-        uses: actions/download-pages-artifact@v3
-
-      # Deploy the site to GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
