@@ -42,7 +42,7 @@ jobs:
       # 4. Transform folders and update _config.yml.
       - name: Transform folders and process Markdown files
         run: |
-          # Define a list of folders to exclude (adjust as needed).
+          echo "Starting Transform"
           excluded=("ExcludeFolder1" "ExcludeFolder2")
           
           # Loop over each top-level directory.
