@@ -3,11 +3,12 @@ name: Transform, Build & Deploy Jekyll Site
 on:
   push:
     branches:
-      - Release   # Update to match your actual branch name (e.g., "Release" or "release")
+      - Release   # Make sure this exactly matches your branch name (e.g. "Release" or "release")
   workflow_dispatch:
 
+# Grant write permissions for commits plus Pages and id-token permissions.
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -16,38 +17,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  transform_build:
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out the repository (read-only workspace)
+      # 1. Check out the repository on the Release branch.
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          ref: Release
 
-      # 2. Set up Ruby (required for Jekyll)
+      # 2. Set up Ruby (required for Jekyll).
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.2.2'
 
-      # 3. Install yq (for YAML processing in _config.yml)
+      # 3. Install yq (for YAML processing on _config.yml).
       - name: Install yq
         run: |
           wget -q https://github.com/mikefarah/yq/releases/download/v4.30.6/yq_linux_amd64 -O yq
           chmod +x yq
           sudo mv yq /usr/local/bin/yq
 
-      # 4. Transform folders into collections in the workspace and update _config.yml
+      # 4. Transform folders and update _config.yml.
       - name: Transform folders to collections and update _config.yml
         run: |
-          # Define a list of folders to exclude from processing.
+          # Define a list of folders to exclude (adjust as needed).
           excluded=("ExcludeFolder1" "ExcludeFolder2")
           
-          # Loop over each top-level directory
+          # Loop over each top-level directory.
           for d in */ ; do
-            # Remove the trailing slash from the folder name.
+            # Remove the trailing slash.
             folder="${d%/}"
             if [ -d "$folder" ]; then
-              # Process folders whose name starts with an uppercase letter (A-Z)
+              # Only process folders whose name starts with an uppercase letter.
               first_char=$(echo "$folder" | cut -c1)
               if [[ "$first_char" =~ [A-Z] ]]; then
                 skip=false
@@ -62,15 +65,18 @@ jobs:
                   continue
                 fi
 
-                # Convert folder name to lowercase and snake_case; then prepend an underscore.
+                # Convert the folder name:
+                #   - to lowercase,
+                #   - replace spaces with underscores,
+                #   - and prepend an underscore.
                 new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/ /_/g')
                 new_folder="_${new_folder}"
                 echo "Transforming folder '$folder' to '$new_folder'"
                 
-                # Rename (move) the folder in the runner's workspace.
+                # Rename (move) the folder.
                 mv "$folder" "$new_folder"
                 
-                # Derive the collection name (without the leading underscore).
+                # Derive the collection name (strip the leading underscore).
                 coll_name="${new_folder#_}"
                 
                 # Ensure _config.yml has a collections section.
@@ -90,23 +96,32 @@ jobs:
             fi
           done
 
-      # 5. Configure Pages (prepares the environment for the build)
+      # 5. Commit the transformed changes back to the Release branch.
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          # If there are changes, commit them; if not, output a message.
+          git commit -m "Transform folders for collections" || echo "No changes to commit"
+          git push origin HEAD:Release
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
-      # 6. Build the Jekyll site (the build uses the transformed workspace)
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
           destination: ./_site
-
-      # 7. Upload the built site as an artifact (to be used by the deploy job)
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
 
+  # Deployment job
   deploy:
     environment:
       name: github-pages
