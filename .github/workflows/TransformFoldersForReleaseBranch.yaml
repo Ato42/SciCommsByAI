@@ -203,7 +203,7 @@ jobs:
               echo "</ul>"
               echo ""
             done
-          } > index.markdown
+          } > index.html
 
       # 5. Commit the transformed changes back to the Release branch.
       - name: Commit changes
