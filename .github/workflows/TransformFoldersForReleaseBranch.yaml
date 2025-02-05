@@ -1,0 +1,241 @@
+name: Transform, Build & Deploy Jekyll Site
+
+on:
+  pull_request:
+    branches:
+      - Release   # Make sure this exactly matches your branch name (e.g. "Release" or "release")
+    types: [closed] 
+  workflow_dispatch:
+
+# Grant write permissions for commits plus Pages and id-token permissions.
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  if_merged:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo The PR was merged
+  transform_build:
+    runs-on: ubuntu-latest
+    needs: if_merged
+    steps:
+      # 1. Check out the repository on the Release branch.
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: Release
+          fetch-depth: 0    # 获取完整历史以确保能正确处理 PR
+
+      # 2. Set up Ruby (required for Jekyll).
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2.2'
+
+      # 3. Install yq (for YAML processing on _config.yml).
+      - name: Install yq
+        run: |
+          wget -q https://github.com/mikefarah/yq/releases/download/v4.30.6/yq_linux_amd64 -O yq
+          chmod +x yq
+          sudo mv yq /usr/local/bin/yq
+
+      # 4. Transform folders and update _config.yml.
+      - name: Transform folders and process Markdown files
+        run: |
+          echo "Starting Transform"
+          excluded=("ExcludeFolder1" "ExcludeFolder2")
+          
+          # Create an array to store collection information for the main index
+          declare -A collections_info
+          
+          # Loop over each top-level directory.
+          for d in */ ; do
+            folder="${d%/}"
+            if [ -d "$folder" ]; then
+              echo "Processing folder $folder"
+              # Process only folders whose name starts with an uppercase letter.
+              first_char=$(echo "$folder" | cut -c1)
+              if [[ "$first_char" =~ [A-Z] ]]; then
+                skip=false
+                for ex in "${excluded[@]}"; do
+                  if [ "$folder" = "$ex" ]; then
+                    echo "Skipping excluded folder: $folder"
+                    skip=true
+                    break
+                  fi
+                done
+                if [ "$skip" = true ]; then
+                  continue
+                fi
+
+                # Store original folder name for display
+                display_name="$folder"
+                
+                # Convert folder name: lowercase, replace spaces and special chars with underscores
+                new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')
+                new_folder="_${new_folder}"
+                echo "Transforming folder '$folder' to '$new_folder'"
+                
+                # If new folder exists, merge contents instead of moving
+                if [ -d "$new_folder" ]; then
+                  echo "Target folder exists, merging contents"
+                  # Move all contents to the target folder
+                  cp -r "$folder"/* "$new_folder"/ 2>/dev/null || true
+                  rm -rf "$folder"
+                else
+                  # If target folder doesn't exist, just move the folder
+                  mv "$folder" "$new_folder"
+                fi
+                
+                # Derive the collection name (strip the leading underscore)
+                coll_name="${new_folder#_}"
+                
+                # Store collection info for main index
+                collections_info["$coll_name"]="$display_name"
+                
+                # Use yq to add the collection with display name if not already present
+                current_val=$(yq e ".collections.${coll_name}" _config.yml)
+                if [ "$current_val" = "null" ]; then
+                  echo "Adding collection '$coll_name' to _config.yml"
+                  yq e -i ".collections.${coll_name}.output = true" _config.yml
+                  yq e -i ".collections.${coll_name}.display_name = \"$display_name\"" _config.yml
+                fi
+
+                # Process each Markdown file (.md or .markdown) in the new folder.
+                for file in "$new_folder"/*.{md,markdown}; do
+                  if [ -f "$file" ]; then
+                    echo "Processing file: $file"
+                    
+                    # Normalize filename
+                    dir=$(dirname "$file")
+                    base=$(basename "$file")
+                    # Convert to snake_case: lowercase, replace spaces and special chars with underscore
+                    new_base=$(echo "$base" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9.]/_/g' -e 's/__*/_/g')
+                    new_file="$dir/$new_base"
+                    if [ "$file" != "$new_file" ]; then
+                      echo "Renaming file '$base' to '$new_base'"
+                      mv "$file" "$new_file"
+                      file="$new_file"
+                    fi
+                    
+                    # Check if the file already has front matter
+                    if ! grep -q "^---$" "$file" || ! grep -q "^layout:" "$file"; then
+                      # Create temporary file
+                      tmp_file=$(mktemp)
+                      
+                      # Extract title from first line or filename
+                      title=$(head -n 1 "$file" | sed -e 's/^#\+ *//' -e 's/[*_]//g')
+                      if [ -z "$title" ]; then
+                        title=$(echo "$new_base" | sed -e 's/\.md$//' -e 's/-/ /g')
+                      fi
+                      
+                      # Extract metadata
+                      author=$(grep -i "^Author:" "$file" | sed -e 's/^Author: *\*\(.*\)\*$/\1/' -e 's/^Author: *//')
+                      prompt=$(grep -i "^Prompt:" "$file" | sed -e 's/^Prompt: *\*\(.*\)\*$/\1/' -e 's/^Prompt: *//')
+                      
+                      # Write front matter
+                      {
+                        echo "---"
+                        echo "layout: post"
+                        echo "title: \"$title\""
+                        [ ! -z "$author" ] && echo "author: \"$author\""
+                        [ ! -z "$prompt" ] && echo "prompt: \"$prompt\""
+                        echo "created: \"$(date -u +"%Y-%m-%d %H:%M:%S")\""
+                        echo "updated: \"$(date -u +"%Y-%m-%d %H:%M:%S")\""
+                        echo "---"
+                        echo ""
+                        
+                        # Add content, skipping existing front matter if any
+                        sed -e '1,/^---$/d' -e '/^---$/,$!d' "$file" 2>/dev/null || cat "$file"
+                      } > "$tmp_file"
+                      
+                      # Replace original file
+                      mv "$tmp_file" "$file"
+                    fi
+                  fi
+                done
+              fi
+            fi
+          done
+
+          # Update main index.html with all collections
+          {
+            echo "---"
+            echo "layout: home"
+            echo "---"
+            echo ""
+            
+            # Get collections from _config.yml
+            collections=$(yq e '.collections | keys | .[]' _config.yml)
+            
+            # Loop through collections from _config.yml
+            while IFS= read -r coll_name; do
+              # Get display name from config, fallback to collection name if not set
+              display_name=$(yq e ".collections.${coll_name}.display_name" _config.yml)
+              if [ "$display_name" = "null" ]; then
+                display_name="${coll_name^}"  # Capitalize first letter
+              fi
+              
+              echo ""
+              echo "## ${display_name}"
+              echo ""
+              echo "<ul>"
+              echo "{% for post in site.${coll_name} %}"
+              echo "  {% unless post.name == 'index.md' %}"
+              echo "  <li>"
+              echo "    <a href=\"{{ post.url }}\">{{ post.title }}</a>"
+              echo "    {% if post.description %}<p>{{ post.description }}</p>{% endif %}"
+              echo "  </li>"
+              echo "  {% endunless %}"
+              echo "{% endfor %}"
+              echo "</ul>"
+              echo ""
+            done <<< "$collections"
+          } > index.html
+
+      # 5. Commit the transformed changes back to the Release branch.
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          # If there are changes, commit them; if not, output a message.
+          git commit -m "Transform folders for collections" || echo "No changes to commit"
+          git push origin HEAD:Release
+
+  build:
+    runs-on: ubuntu-latest
+    needs: transform_build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+  # Deployment job
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
