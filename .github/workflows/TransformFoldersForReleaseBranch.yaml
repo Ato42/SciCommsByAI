@@ -84,7 +84,17 @@ jobs:
                 new_folder=$(echo "$folder" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')
                 new_folder="_${new_folder}"
                 echo "Transforming folder '$folder' to '$new_folder'"
-                mv "$folder" "$new_folder"
+                
+                # If new folder exists, merge contents instead of moving
+                if [ -d "$new_folder" ]; then
+                  echo "Target folder exists, merging contents"
+                  # Move all contents to the target folder
+                  cp -r "$folder"/* "$new_folder"/ 2>/dev/null || true
+                  rm -rf "$folder"
+                else
+                  # If target folder doesn't exist, just move the folder
+                  mv "$folder" "$new_folder"
+                fi
                 
                 # Derive the collection name (strip the leading underscore)
                 coll_name="${new_folder#_}"

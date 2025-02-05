@@ -2,7 +2,6 @@
 
 Imagine you’re at a lively party. Every guest represents a word (or token) in a sentence. At this party, each guest isn’t just a silent bystander—they each play three roles: they ask a question (a **Query**), wear a badge that tells others what they’re about (a **Key**), and carry a useful story or piece of information (a **Value**). Let’s explore why each guest has these roles and how they interact—with a sprinkle of equations to reveal the inner workings.
 
----
 
 ## 1. Mapping Tokens to Party Guests
 
