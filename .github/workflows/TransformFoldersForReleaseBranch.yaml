@@ -178,7 +178,7 @@ jobs:
             fi
           done
 
-          # Update main index.markdown with all collections
+          # Update main index.html with all collections
           {
             echo "---"
             echo "layout: home"
