@@ -151,29 +151,6 @@ jobs:
                     fi
                   fi
                 done
-
-                # Create index.md with proper collection name
-                if [ ! -f "$new_folder/index.md" ]; then
-                  echo "Creating index.md for collection $coll_name"
-                  {
-                    echo "---"
-                    echo "layout: default"
-                    echo "title: \"${folder} Collection\""  # Use original folder name for title
-                    echo "---"
-                    echo ""
-                    echo "# ${folder} Collection"
-                    echo ""
-                    echo "This collection contains the following posts:"
-                    echo ""
-                    for md in "$new_folder"/*.{md,markdown}; do
-                      if [ -f "$md" ]; then
-                        base=$(basename "$md")
-                        echo "- [$base]($base)"
-                      fi
-                    done
-                  } > "$new_folder/index.md"
-                fi
-
               fi
             fi
           done
@@ -185,9 +162,17 @@ jobs:
             echo "---"
             echo ""
             
-            # Loop through collections and create sections
-            for coll_name in "${!collections_info[@]}"; do
-              display_name="${collections_info[$coll_name]}"
+            # Get collections from _config.yml
+            collections=$(yq e '.collections | keys | .[]' _config.yml)
+            
+            # Loop through collections from _config.yml
+            while IFS= read -r coll_name; do
+              # Get display name from config, fallback to collection name if not set
+              display_name=$(yq e ".collections.${coll_name}.display_name" _config.yml)
+              if [ "$display_name" = "null" ]; then
+                display_name="${coll_name^}"  # Capitalize first letter
+              fi
+              
               echo ""
               echo "## ${display_name}"
               echo ""
@@ -202,7 +187,7 @@ jobs:
               echo "{% endfor %}"
               echo "</ul>"
               echo ""
-            done
+            done <<< "$collections"
           } > index.html
 
       # 5. Commit the transformed changes back to the Release branch.
